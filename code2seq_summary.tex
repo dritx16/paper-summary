@@ -1,0 +1,135 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{float}
+\usepackage{amsmath}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{titlesec}
+\usepackage{graphicx}
+
+
+\usepackage[hmargin=3cm,vmargin=6.0cm]{geometry}
+\topmargin=-2cm
+\addtolength{\textheight}{6.5cm}
+\addtolength{\textwidth}{2.0cm}
+\setlength{\oddsidemargin}{0.0cm}
+\setlength{\evensidemargin}{0.0cm}
+\usepackage{indentfirst}
+\usepackage{amsfonts}
+\author{Süleyman Ateş}
+\date{May 2022}
+
+\title{Paper Summary}
+
+\begin{document}
+\maketitle
+
+For UIUC SE Summer Research Program application screening process task, I will be summarizing the paper \textit{CODE2SEQ: GENERATING SEQUENCES FROM STRUCTURED REPRESENTATIONS OF CODE}. Paper can be found via this \href{https://arxiv.org/pdf/1808.01400.pdf}{link}.
+
+\section{Problem}
+
+Generating natural sequences from source code snippets has diverse applications such as code summarization, code captioning and documentation. In this paper, a general problem of generating a natural language sequence from a given source code snippet is considered. For these purposes, sequence-to-sequence (seq2seq) models based on NMT have great performance on these tasks by applying the sequence of tokens method to source code. A new model called \textbf{code2seq} is presented as an alternative approach for this problem.
+
+\section{Proposed Solution and Differences With Previous Studies}
+
+As mentioned earlier, code2seq model is presented as an alternative solution in this paper, and it basically tries to leverage the syntactic structure of programming languages to better encode source code. What makes code2seq impressive and effective is that it uses a different structural encoding method which is representing a code snippet as the set of compositional paths in its abstract syntax tree (AST). After that it uses attention to filter the more relevant paths in decoding part. Let me dive into structural encoding part more.
+
+For a given AST of a code snippet, code2seq considers all pairwise paths between terminals (leaves of AST), and represents them as sequence of nonterminal and terminal nodes. After that, with terminals' values the model use these paths to represent the given code snippet. Thanks to this structural encoding manner, encoder used in code2seq can generalize much better to unseen examples since AST normalizes a lot of surface from variance. AST paths can be represented as a set of $k$ paths: $\{(v_{1}^1 v_{2}^1 \cdots v_{l_1}^1), \cdots, (v_{1}^k v_{2}^k \cdots v_{l_k}^k)\}$, where $l_j$ is the length of $j$th path.
+
+\subsection{Model Architecture}
+
+code2seq follows the standard encoder-decoder architecture for NMT while it differs significantly in the sense that the encoder creates a vector representation for each AST path separately (classical NMT encoders read the input as a flat sequence of tokens). After that, the decoder attends over the encoded AST paths in vector forms while generating the target sequence. 
+\begin{center}
+    $x = (x_1, \cdots, x_n) \xrightarrow{encoder} z = (z_1, \cdots, z_n)$ \\
+    $z = (z_1, \cdots, z_n) \xrightarrow{decoder} y = (y_1, \cdots, y_n)$
+\end{center}
+Note that the decoder in code2seq uses the average of all of the $k$ paths as the start state. Moreover, at each time step t because of the attention, a context vector $c_t$ is computed by attending over in $z$ using the state $h_t$ which usually computed by LSTM.
+\begin{equation*}
+    p(y_1, \cdots, y_m | x_1, \cdots, x_n) = \Pi_{j=1}^{m} p(y_j | y _{<j}, z_1, \cdots, z_n)
+\end{equation*}
+\begin{equation*}
+    \alpha^t = softmax(h_y W_{\alpha}z) \hspace{4cm} c_t = \sum_{i}^n \alpha_{i}^t z_i
+\end{equation*}
+\begin{equation*}
+    p(y_j | y _{<j}, z_1, \cdots, z_n) = softmax(W_s tanh(W_c[c_t;h_t]))
+\end{equation*}
+
+\subsection{AST Encoder}
+
+As mentioned earlier, from given AST paths $\{x_1, \cdots, x_k\}$, code2seq's encoder creates vector representations $z_i$'s. Here, each path is represented separately by using bi-directional LSTM to encode the path, and sub-token embeddings to get the compositional nature of the terminals' values.
+\newline
+\newline
+\textbf{Path Representation}
+
+All AST paths include nodes and their child indices from a vocabulary up to 364 symbols together. Each node is represented by a learned matrix $E^{nodes}$, and then encoded the whole sequence with using the final state of bi-directional LSTM:
+\begin{equation*}
+    h_1, \cdots, h_l = LSTM(E_{v_1}^{nodes}, \cdots, E_{v_l}^{nodes})
+\end{equation*}
+
+\begin{center}
+    encode\_path$(v_1, \cdots, v_l) = [\overrightarrow{h_l}; \overleftarrow{h_1}]$
+\end{center}
+\newline
+\newline
+\textbf{Token Representation}
+
+As mentioned earlier, the first and the last node of an AST path are terminals having values which are tokens. Moreover, each token is splitted into subtokens e.g. "TreeNode" $\rightarrow$ "Tree" and "Node". A learned matrix $E^{subtokens}$ is used here to represent each subtoken, they are all summed to give the full token:
+\begin{center}
+    encode\_token$(w) = \sum_{s \in split(w)} E_s^{subtokens}$
+\end{center}
+\newline
+\newline
+\textbf{Resulting Combined Representation}
+
+At the end, path's representation is concatenated with the token representations of each terminal node, and applied a fully-connected layer:
+\begin{equation*}
+    z = tanh(W_{in}[encode\_path(v_1, \cdots, v_l); encode\_token(value(v_1));encode\_token(value(v_1))])
+\end{equation*}
+where \textit{value($v_l$)} gives the corresponding value of a terminal node, and $W_{in}$ is a $(2d_{path} + 2d_{token}) \times d_{hidden}$ matrix.
+
+Lastly, as mentioned earlier, the decoder's start state is the combined representations of all the k paths in the given sample:
+\begin{equation*}
+    h_0 = \frac{1}{k} \sum_{i=1}^k z_i
+\end{equation*}
+
+\textbf{Important Note:} In code2seq, the order of the input random paths is not taken into account unlike typical encode-decoder models.
+\newpage
+
+\textbf{Attention}
+
+At the end, the decoder creates the output sequence while attending over all the $z_1, \cdots, z_k$. Attention is important for selecting the distribution among $z_1, \cdots, z_k$ in decoding.
+
+\section{Experimental Results}
+
+code2seq is evaluated on two code-to-sequence tasks namely summarization which consists of predicting Java methods' names from their bodies, and code captioning which aims to generate natural language descriptions of C\# code snippets.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[scale=0.5]{table1.png}
+    \caption{Code Summarization tasks performances for each model. code2seq outperforms related previous models in the field.}
+    \label{fig:my_label}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[scale=0.5]{table2.png}
+    \caption{Code Captioning tasks performances for each model. code2seq outperforms related previous models in the field.}
+    \label{fig:my_label}
+\end{figure}
+
+\newpage
+\section{Ablation Study}
+
+To capture the contributions of different parts of code2seq architecture, an ablation study is conducted.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[scale=0.5]{table3.png}
+    \caption{Variations of code2seq model to better understand the effects of each component.}
+    \label{fig:my_label}
+\end{figure}
+
+What is essential and what makes code2seq successful is that the focus it gives to AST leaves. Thanks to this, the model can ignore unimportant details, e.g. semicolons, brackets etc., and can focus more on named tokens to construct better connections in these tasks. It can be seen in Figure 3 in \textit{No AST nodes (only tokens)} row. As a result, this structural representation power make code2seq a state-of-the-art and uniquely different work in the field of generating natural sequences from source code snippets.
+
+\end{document}
+
